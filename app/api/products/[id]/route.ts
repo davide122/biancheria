@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getItalyDayInfo } from "@/lib/day";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -23,36 +24,66 @@ export async function PATCH(
       return NextResponse.json({ error: "Azione non valida" }, { status: 400 });
     }
 
-    let product;
-
-    if (body.action === "increment") {
-      product = await prisma.product.update({
+    const product = await prisma.$transaction(async (tx) => {
+      const currentProduct = await tx.product.findUnique({
         where: { id: productId },
-        data: {
-          quantity: {
-            increment: 1,
-          },
-        },
       });
-    } else {
-      await prisma.product.updateMany({
-        where: {
-          id: productId,
-          quantity: {
-            gt: 0,
+
+      if (!currentProduct) {
+        return null;
+      }
+
+      if (body.action === "increment") {
+        return tx.product.update({
+          where: { id: productId },
+          data: {
+            quantity: {
+              increment: 1,
+            },
           },
-        },
+        });
+      }
+
+      if (currentProduct.quantity === 0) {
+        return currentProduct;
+      }
+
+      const { dayKey, date } = getItalyDayInfo();
+
+      const updatedProduct = await tx.product.update({
+        where: { id: productId },
         data: {
           quantity: {
             decrement: 1,
           },
+          dirtyAmount: {
+            increment: 1,
+          },
         },
       });
 
-      product = await prisma.product.findUnique({
-        where: { id: productId },
+      await tx.dailyUsage.upsert({
+        where: {
+          productId_dayKey: {
+            productId,
+            dayKey,
+          },
+        },
+        update: {
+          removedAmount: {
+            increment: 1,
+          },
+        },
+        create: {
+          productId,
+          dayKey,
+          date,
+          removedAmount: 1,
+        },
       });
-    }
+
+      return updatedProduct;
+    });
 
     if (!product) {
       return NextResponse.json({ error: "Prodotto non trovato" }, { status: 404 });

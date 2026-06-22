@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 type Product = {
@@ -15,6 +16,7 @@ type ApiResponse = {
 };
 
 export function LaundryCounterApp() {
+  const lowStockThreshold = 4;
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +49,11 @@ export function LaundryCounterApp() {
 
   const totalItems = useMemo(
     () => products.reduce((sum, product) => sum + product.quantity, 0),
+    [products],
+  );
+
+  const lowStockItems = useMemo(
+    () => products.filter((product) => product.quantity <= lowStockThreshold),
     [products],
   );
 
@@ -100,7 +107,7 @@ export function LaundryCounterApp() {
   };
 
   return (
-    <main className="mx-auto min-h-screen max-w-md px-4 py-6 sm:px-6">
+    <main className="mx-auto min-h-screen max-w-md px-4 py-6 pb-28 sm:px-6">
       <section className="rounded-[28px] bg-white/90 p-5 shadow-[0_20px_60px_-30px_rgba(37,99,235,0.45)] ring-1 ring-slate-200 backdrop-blur">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
@@ -119,6 +126,12 @@ export function LaundryCounterApp() {
         {error ? (
           <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
+          </div>
+        ) : null}
+
+        {!loading && lowStockItems.length > 0 ? (
+          <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+            Scorte basse: {lowStockItems.map((product) => product.name).join(", ")}.
           </div>
         ) : null}
 
@@ -176,6 +189,17 @@ export function LaundryCounterApp() {
               })}
         </div>
       </section>
+
+      <div className="fixed inset-x-0 bottom-0 z-10 mx-auto w-full max-w-md px-4 pb-4 sm:px-6">
+        <Link
+          href="/storico"
+          className="flex min-h-14 w-full items-center justify-center rounded-2xl bg-slate-900 px-5 text-base font-semibold text-white shadow-[0_16px_40px_-20px_rgba(15,23,42,0.8)] transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
+        >
+          {lowStockItems.length > 0
+            ? `Apri storico e avvisi (${lowStockItems.length})`
+            : "Apri storico sporco"}
+        </Link>
+      </div>
     </main>
   );
 }

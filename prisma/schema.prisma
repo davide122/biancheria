@@ -5,13 +5,28 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 model Product {
-  id        Int      @id @default(autoincrement())
-  name      String   @unique
-  quantity  Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          Int          @id @default(autoincrement())
+  name        String       @unique
+  quantity    Int          @default(0)
+  dirtyAmount Int          @default(0)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  dailyUsages DailyUsage[]
+}
+
+model DailyUsage {
+  id            Int      @id @default(autoincrement())
+  dayKey        String
+  date          DateTime
+  removedAmount Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  productId     Int
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, dayKey])
 }

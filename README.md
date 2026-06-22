@@ -17,7 +17,7 @@ npm install -D tsx
 npx prisma init
 ```
 
-Poi configura `DATABASE_URL` e `DIRECT_URL` nel file `.env` partendo da `.env.example`.
+Poi configura `DATABASE_URL` e `DATABASE_URL_UNPOOLED` nel file `.env` partendo da `.env.example`.
 
 ## 3. Avvio locale
 
@@ -41,9 +41,9 @@ Apri http://localhost:3000.
 
 1. Crea un database su Neon.
 2. Copia la stringa pooled in `DATABASE_URL`.
-3. Copia la stringa diretta in `DIRECT_URL`.
+3. Copia la stringa diretta in `DATABASE_URL_UNPOOLED`.
 4. Importa il repository su Vercel.
-5. Aggiungi in Vercel le environment variables `DATABASE_URL` e `DIRECT_URL`.
+5. Aggiungi in Vercel le environment variables `DATABASE_URL` e `DATABASE_URL_UNPOOLED`.
 6. Imposta il comando build standard: `npm run build`.
 7. Esegui la migration verso Neon:
 
