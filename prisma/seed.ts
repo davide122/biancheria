@@ -8,6 +8,7 @@ const products = [
   { name: "TAPPETINI", quantity: 11 },
   { name: "VISO", quantity: 12 },
   { name: "TELI", quantity: 11 },
+  { name: "BIDET", quantity: 5 },
 ];
 
 async function main() {

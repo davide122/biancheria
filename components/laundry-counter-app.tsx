@@ -137,7 +137,7 @@ export function LaundryCounterApp() {
 
         <div className="space-y-4">
           {loading
-            ? Array.from({ length: 5 }).map((_, index) => (
+            ? Array.from({ length: 6 }).map((_, index) => (
                 <div
                   key={index}
                   className="animate-pulse rounded-3xl border border-slate-200 bg-slate-50 p-5"
