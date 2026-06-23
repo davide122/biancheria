@@ -14,18 +14,25 @@ type HistoryItem = {
 type HistoryResponse = {
   dayKey?: string;
   items?: HistoryItem[];
-  totalDirty?: number;
-  totalUsedToday?: number;
   error?: string;
 };
 
+const pairProductNames = ["LENZUOLA", "TAPPETINI", "FEDERE", "TELI", "BIDET", "VISO"] as const;
+const reorderThreshold = 6;
+const pairRequirements: Record<(typeof pairProductNames)[number], number> = {
+  LENZUOLA: 2,
+  TAPPETINI: 1,
+  FEDERE: 2,
+  TELI: 2,
+  BIDET: 2,
+  VISO: 2,
+};
+
 export function HistoryPage() {
-  const lowStockThreshold = 4;
   const [dayKey, setDayKey] = useState("");
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [isPickingUp, setIsPickingUp] = useState(false);
-  const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -71,49 +78,64 @@ export function HistoryPage() {
     () =>
       items.reduce(
         (acc, item) => {
-          acc.usedToday += item.usedToday;
           acc.dirtyAmount += item.dirtyAmount;
+          acc.quantity += item.quantity;
           return acc;
         },
-        { usedToday: 0, dirtyAmount: 0 },
+        { quantity: 0, dirtyAmount: 0 },
       ),
     [items],
   );
 
-  const lowStockItems = useMemo(
-    () => items.filter((item) => item.quantity <= lowStockThreshold),
+  const pairItems = useMemo(
+    () =>
+      items.filter((item) =>
+        pairProductNames.includes(item.name as (typeof pairProductNames)[number]),
+      ),
     [items],
   );
 
-  const whatsappMessage = useMemo(() => {
-    const lines = [
-      `Riepilogo lavanderia ${dayKey || "oggi"}`,
-      "",
-      "Sporco da ritirare:",
-      ...items.map((item) => `- ${item.name}: ${item.dirtyAmount}`),
-      "",
-      `Totale sporco: ${totals.dirtyAmount}`,
-      "",
-      "Scorte basse:",
-    ];
+  const otherItems = useMemo(
+    () => items.filter((item) => !pairItems.some((pairItem) => pairItem.id === item.id)),
+    [items, pairItems],
+  );
 
-    if (lowStockItems.length === 0) {
-      lines.push("- Nessun prodotto sotto soglia");
-    } else {
-      lines.push(
-        ...lowStockItems.map(
-          (item) => `- ${item.name}: rimaste ${item.quantity} (soglia ${lowStockThreshold})`,
-        ),
-      );
+  const possiblePairs = useMemo(() => {
+    if (pairItems.length === 0) {
+      return 0;
     }
 
-    return lines.join("\n");
-  }, [dayKey, items, lowStockItems, lowStockThreshold, totals.dirtyAmount]);
+    return Math.min(
+      ...pairItems.map((item) =>
+        Math.floor(item.quantity / pairRequirements[item.name as keyof typeof pairRequirements]),
+      ),
+    );
+  }, [pairItems]);
 
-  const whatsappUrl = useMemo(
-    () => `https://wa.me/?text=${encodeURIComponent(whatsappMessage)}`,
-    [whatsappMessage],
+  const pairBreakdown = useMemo(
+    () =>
+      pairItems.map((item) => ({
+        ...item,
+        requirement: pairRequirements[item.name as keyof typeof pairRequirements],
+        pairsFromCurrent: Math.floor(
+          item.quantity / pairRequirements[item.name as keyof typeof pairRequirements],
+        ),
+        isLimiting:
+          Math.floor(item.quantity / pairRequirements[item.name as keyof typeof pairRequirements]) ===
+          possiblePairs,
+      })),
+    [pairItems, possiblePairs],
   );
+
+  const reorderSuggestions = useMemo(() => {
+    return pairItems
+      .map((item) => ({
+        ...item,
+        missingQuantity: Math.max(0, reorderThreshold - item.quantity),
+      }))
+      .filter((item) => item.missingQuantity > 0)
+      .sort((first, second) => second.missingQuantity - first.missingQuantity);
+  }, [pairItems]);
 
   const handlePickup = async () => {
     try {
@@ -144,15 +166,6 @@ export function HistoryPage() {
     }
   };
 
-  const handleCopyMessage = async () => {
-    try {
-      await navigator.clipboard.writeText(whatsappMessage);
-      setCopyMessage("Messaggio copiato");
-    } catch {
-      setCopyMessage("Copia non riuscita");
-    }
-  };
-
   return (
     <main className="mx-auto min-h-screen max-w-md px-4 py-6 pb-28 sm:px-6">
       <section className="rounded-[28px] bg-white/90 p-5 shadow-[0_20px_60px_-30px_rgba(15,23,42,0.3)] ring-1 ring-slate-200 backdrop-blur">
@@ -164,92 +177,85 @@ export function HistoryPage() {
             Torna al contatore
           </Link>
           <p className="mt-5 text-sm font-medium uppercase tracking-[0.2em] text-slate-500">
-            Storico
+            Riepilogo
           </p>
-          <h1 className="mt-2 text-3xl font-bold text-slate-900">Sporco di oggi</h1>
+          <h1 className="mt-2 text-3xl font-bold text-slate-900">Situazione biancheria</h1>
           <p className="mt-2 text-base leading-6 text-slate-600">
-            Ogni rimozione viene conteggiata come biancheria sporca.
+            Vedi subito sporco da ritirare, biancheria attuale e coppie possibili.
           </p>
           {dayKey ? (
             <p className="mt-2 text-sm text-slate-500">Data registro: {dayKey}</p>
           ) : null}
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <article className="rounded-3xl bg-slate-900 p-4 text-white">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-300">Usato oggi</p>
-            <p className="mt-2 text-3xl font-bold">{loading ? "-" : totals.usedToday}</p>
-          </article>
-          <article className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-amber-950">
-            <p className="text-xs uppercase tracking-[0.2em] text-amber-700">Sporco attuale</p>
-            <p className="mt-2 text-3xl font-bold">{loading ? "-" : totals.dirtyAmount}</p>
-          </article>
-        </div>
-
-        <section className="mt-5 rounded-3xl border border-emerald-200 bg-emerald-50 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-[0.2em] text-emerald-700">
-                Messaggio WhatsApp
-              </p>
-              <p className="mt-2 text-sm leading-6 text-emerald-900">
-                Lo prepari manualmente e lo incolli oppure lo apri direttamente su WhatsApp.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <button
-              type="button"
-              className="flex min-h-12 items-center justify-center rounded-2xl border border-emerald-300 bg-white px-4 text-sm font-semibold text-emerald-900 transition hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              onClick={() => void handleCopyMessage()}
-              disabled={loading}
-            >
-              Copia messaggio
-            </button>
-            <a
-              href={whatsappUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="flex min-h-12 items-center justify-center rounded-2xl bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            >
-              Apri WhatsApp
-            </a>
-          </div>
-
-          {copyMessage ? <p className="mt-3 text-sm text-emerald-800">{copyMessage}</p> : null}
-        </section>
-
-        <section className="mt-5 rounded-3xl border border-rose-200 bg-rose-50 p-4">
-          <p className="text-xs font-medium uppercase tracking-[0.2em] text-rose-700">
-            Avvisi Scorte
-          </p>
-          <p className="mt-2 text-sm leading-6 text-rose-900">
-            Ti avviso quando un prodotto scende a {lowStockThreshold} o meno.
-          </p>
-
-          <div className="mt-4 space-y-3">
-            {loading ? (
-              <div className="h-12 animate-pulse rounded-2xl bg-rose-100" />
-            ) : lowStockItems.length === 0 ? (
-              <div className="rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm text-emerald-800">
-                Nessuna scorta critica al momento.
+        {reorderSuggestions.length > 0 ? (
+          <section className="mb-4 rounded-[28px] border border-rose-200 bg-rose-50 p-5 shadow-[0_20px_50px_-30px_rgba(190,24,93,0.35)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium uppercase tracking-[0.2em] text-rose-700">
+                  Da Ordinare
+                </p>
+                <h2 className="mt-2 text-2xl font-bold text-rose-950">Hai poca disponibilita</h2>
+                <p className="mt-2 text-sm leading-6 text-rose-800">
+                  Il riordino parte solo quando un articolo scende sotto {reorderThreshold} pezzi.
+                </p>
               </div>
-            ) : (
-              lowStockItems.map((item) => (
+              <div className="rounded-2xl bg-white px-4 py-3 text-right ring-1 ring-rose-200">
+                <p className="text-xs uppercase tracking-[0.18em] text-rose-500">Articoli</p>
+                <p className="mt-1 text-2xl font-bold text-rose-950">{reorderSuggestions.length}</p>
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {reorderSuggestions.map((item) => (
                 <div
                   key={item.id}
-                  className="rounded-2xl border border-rose-200 bg-white px-4 py-3"
+                  className="rounded-3xl bg-white px-4 py-4 ring-1 ring-rose-200"
                 >
-                  <p className="text-sm font-semibold text-rose-900">Ordina {item.name}</p>
-                  <p className="mt-1 text-sm text-rose-700">
-                    Rimaste {item.quantity} unita, soglia avviso {lowStockThreshold}.
-                  </p>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-lg font-semibold text-slate-900">{item.name}</p>
+                      <p className="text-sm text-slate-500">Disponibilita attuale: {item.quantity}</p>
+                    </div>
+                    <div className="rounded-2xl bg-rose-100 px-3 py-2 text-right text-rose-900">
+                      <p className="text-xs uppercase tracking-[0.15em]">Ordina Almeno</p>
+                      <p className="text-2xl font-bold">{item.missingQuantity}</p>
+                    </div>
+                  </div>
                 </div>
-              ))
-            )}
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        <article className="rounded-[28px] bg-gradient-to-br from-slate-900 via-slate-800 to-blue-900 p-5 text-white shadow-[0_24px_60px_-30px_rgba(15,23,42,0.9)]">
+          <p className="text-sm font-medium uppercase tracking-[0.2em] text-slate-300">
+            Coppie Possibili
+          </p>
+          <div className="mt-3 flex items-end justify-between gap-4">
+            <div>
+              <p className="text-5xl font-bold">{loading ? "-" : possiblePairs}</p>
+              <p className="mt-2 text-sm leading-6 text-slate-300">
+                Calcolate solo sulle quantita attuali, non sullo sporco.
+              </p>
+            </div>
+            <div className="rounded-2xl bg-white/10 px-4 py-3 text-right ring-1 ring-white/15">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-300">Formula</p>
+              <p className="mt-1 text-base font-semibold">2 pezzi per articolo</p>
+            </div>
           </div>
-        </section>
+        </article>
+
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          <article className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-amber-950">
+            <p className="text-xs uppercase tracking-[0.18em] text-amber-700">Sporco Da Ritirare</p>
+            <p className="mt-2 text-4xl font-bold">{loading ? "-" : totals.dirtyAmount}</p>
+          </article>
+          <article className="rounded-3xl border border-slate-200 bg-slate-50 p-4 text-slate-950">
+            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Biancheria Attuale</p>
+            <p className="mt-2 text-4xl font-bold">{loading ? "-" : totals.quantity}</p>
+          </article>
+        </div>
 
         {error ? (
           <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -257,43 +263,103 @@ export function HistoryPage() {
           </div>
         ) : null}
 
-        <div className="mt-5 space-y-4">
+        <div className="mt-5 rounded-3xl border border-blue-200 bg-blue-50 p-4">
+          <p className="text-xs font-medium uppercase tracking-[0.2em] text-blue-700">
+            Regola Coppie
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {pairProductNames.map((name) => (
+              <span
+                key={name}
+                className="rounded-full bg-white px-3 py-2 text-sm font-medium text-blue-900 ring-1 ring-blue-200"
+              >
+                {pairRequirements[name]} {name}
+              </span>
+            ))}
+          </div>
+          <p className="mt-3 text-sm leading-6 text-blue-900">
+            Le coppie usano le quantita attuali. Il riordino invece parte solo sotto {reorderThreshold} pezzi.
+          </p>
+        </div>
+
+        <div className="mt-5 space-y-3">
           {loading
             ? Array.from({ length: 5 }).map((_, index) => (
-                <div key={index} className="animate-pulse rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                <div
+                  key={index}
+                  className="animate-pulse rounded-3xl border border-slate-200 bg-slate-50 p-4"
+                >
                   <div className="h-5 w-28 rounded bg-slate-200" />
-                  <div className="mt-4 h-12 rounded-2xl bg-slate-200" />
+                  <div className="mt-4 h-10 rounded-2xl bg-slate-200" />
                 </div>
               ))
-            : items.map((item) => (
+            : pairBreakdown.map((item) => (
                 <article
                   key={item.id}
-                  className="rounded-3xl border border-slate-200 bg-slate-50 p-5 shadow-sm"
+                  className={`rounded-3xl p-4 shadow-sm ring-1 ${
+                    item.isLimiting
+                      ? "border-rose-200 bg-rose-50 ring-rose-200"
+                      : "border-slate-200 bg-slate-50 ring-slate-200"
+                  }`}
                 >
-                  <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-center justify-between gap-4">
                     <div>
-                      <h2 className="text-xl font-semibold text-slate-900">{item.name}</h2>
-                      <p className="mt-1 text-sm text-slate-500">Movimenti registrati oggi</p>
+                      <h2 className="text-lg font-semibold text-slate-900">{item.name}</h2>
+                      <p className="mt-1 text-sm text-slate-500">Conteggiato nelle coppie</p>
                     </div>
-                    <div className="rounded-2xl bg-white px-4 py-3 text-right shadow-sm ring-1 ring-slate-200">
-                      <p className="text-xs uppercase tracking-[0.15em] text-slate-400">Oggi</p>
-                      <p className="text-2xl font-bold text-slate-900">{item.usedToday}</p>
+                    <div
+                      className={`rounded-2xl px-3 py-2 text-sm font-semibold ${
+                        item.isLimiting
+                          ? "bg-rose-100 text-rose-800"
+                          : "bg-white text-slate-700 ring-1 ring-slate-200"
+                      }`}
+                    >
+                      {item.isLimiting ? "Limita le coppie" : `${item.pairsFromCurrent} coppie`}
                     </div>
                   </div>
 
-                  <div className="mt-4 grid grid-cols-2 gap-3">
+                  <div className="mt-4 grid grid-cols-3 gap-3">
+                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                      <p className="text-xs uppercase tracking-[0.15em] text-slate-400">Attuale</p>
+                      <p className="mt-1 text-3xl font-bold text-slate-900">{item.quantity}</p>
+                    </div>
                     <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
-                      <p className="text-sm text-amber-800">Sporco in attesa di ritiro</p>
+                      <p className="text-xs uppercase tracking-[0.15em] text-amber-700">Sporco</p>
                       <p className="mt-1 text-3xl font-bold text-amber-950">{item.dirtyAmount}</p>
                     </div>
-                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                      <p className="text-sm text-slate-500">Scorte attuali</p>
-                      <p className="mt-1 text-3xl font-bold text-slate-900">{item.quantity}</p>
+                    <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3">
+                      <p className="text-xs uppercase tracking-[0.15em] text-blue-700">Da Solo</p>
+                      <p className="mt-1 text-3xl font-bold text-blue-950">{item.pairsFromCurrent}</p>
                     </div>
                   </div>
                 </article>
               ))}
         </div>
+
+        {otherItems.length > 0 ? (
+          <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-xs font-medium uppercase tracking-[0.2em] text-slate-500">
+              Altri Prodotti
+            </p>
+            <div className="mt-3 space-y-3">
+              {otherItems.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-center justify-between rounded-2xl bg-white px-4 py-3 ring-1 ring-slate-200"
+                >
+                  <div>
+                    <p className="text-base font-semibold text-slate-900">{item.name}</p>
+                    <p className="text-sm text-slate-500">Non entra nel calcolo coppie</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs uppercase tracking-[0.15em] text-slate-400">Attuale</p>
+                    <p className="text-2xl font-bold text-slate-900">{item.quantity}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <div className="fixed inset-x-0 bottom-0 z-10 mx-auto w-full max-w-md px-4 pb-4 sm:px-6">

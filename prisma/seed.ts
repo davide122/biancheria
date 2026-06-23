@@ -12,13 +12,10 @@ const products = [
 ];
 
 async function main() {
-  for (const product of products) {
-    await prisma.product.upsert({
-      where: { name: product.name },
-      update: { quantity: product.quantity },
-      create: product,
-    });
-  }
+  await prisma.product.createMany({
+    data: products,
+    skipDuplicates: true,
+  });
 }
 
 main()
