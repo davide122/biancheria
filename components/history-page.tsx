@@ -17,6 +17,14 @@ type HistoryResponse = {
   error?: string;
 };
 
+type DirtyUpdateResponse = {
+  product?: {
+    id: number;
+    dirtyAmount: number;
+  };
+  error?: string;
+};
+
 const pairProductNames = ["LENZUOLA", "TAPPETINI", "FEDERE", "TELI", "BIDET", "VISO"] as const;
 const reorderThreshold = 6;
 const pairRequirements: Record<(typeof pairProductNames)[number], number> = {
@@ -33,6 +41,12 @@ export function HistoryPage() {
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [isPickingUp, setIsPickingUp] = useState(false);
+  const [editingDirtyId, setEditingDirtyId] = useState<number | null>(null);
+  const [dirtyDraft, setDirtyDraft] = useState("");
+  const [dirtyBusyId, setDirtyBusyId] = useState<number | null>(null);
+  const [dirtyStatus, setDirtyStatus] = useState<string | null>(null);
+  const [reportType, setReportType] = useState<"pickup" | "order">("pickup");
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -137,6 +151,44 @@ export function HistoryPage() {
       .sort((first, second) => second.missingQuantity - first.missingQuantity);
   }, [pairItems]);
 
+  const pickupMessage = useMemo(() => {
+    const dirtyItems = items.filter((item) => item.dirtyAmount > 0);
+    const lines = [`Ritiro sporco ${dayKey || "oggi"}`, ""];
+
+    if (dirtyItems.length === 0) {
+      lines.push("Nessun capo sporco da ritirare.");
+    } else {
+      lines.push("Sporco da ritirare:");
+      lines.push(...dirtyItems.map((item) => `- ${item.name}: ${item.dirtyAmount}`));
+      lines.push("");
+      lines.push(`Totale sporco: ${totals.dirtyAmount}`);
+      lines.push(`Coppie possibili attuali: ${possiblePairs}`);
+    }
+
+    return lines.join("\n");
+  }, [dayKey, items, possiblePairs, totals.dirtyAmount]);
+
+  const orderMessage = useMemo(() => {
+    const lines = [`Ordine biancheria ${dayKey || "oggi"}`, ""];
+
+    if (reorderSuggestions.length === 0) {
+      lines.push("Nessun articolo da ordinare.");
+    } else {
+      lines.push("Da ordinare:");
+      lines.push(
+        ...reorderSuggestions.map(
+          (item) =>
+            `- ${item.name}: ne hai ${item.quantity}, ordina almeno ${item.missingQuantity}`,
+        ),
+      );
+    }
+
+    return lines.join("\n");
+  }, [dayKey, reorderSuggestions]);
+
+  const activeMessage = reportType === "pickup" ? pickupMessage : orderMessage;
+  const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(activeMessage)}`;
+
   const handlePickup = async () => {
     try {
       setIsPickingUp(true);
@@ -163,6 +215,71 @@ export function HistoryPage() {
       setError(message);
     } finally {
       setIsPickingUp(false);
+    }
+  };
+
+  const handleCopyReport = async () => {
+    try {
+      await navigator.clipboard.writeText(activeMessage);
+      setCopyStatus("Messaggio copiato");
+    } catch {
+      setCopyStatus("Copia non riuscita");
+    }
+  };
+
+  const startDirtyEdit = (item: HistoryItem) => {
+    setError(null);
+    setDirtyStatus(null);
+    setEditingDirtyId(item.id);
+    setDirtyDraft(String(item.dirtyAmount));
+  };
+
+  const cancelDirtyEdit = () => {
+    setEditingDirtyId(null);
+    setDirtyDraft("");
+    setDirtyBusyId(null);
+  };
+
+  const saveDirtyEdit = async (itemId: number) => {
+    const nextDirtyAmount = Number(dirtyDraft);
+
+    if (!Number.isInteger(nextDirtyAmount) || nextDirtyAmount < 0) {
+      setError("Lo sporco deve essere un numero intero maggiore o uguale a 0");
+      return;
+    }
+
+    try {
+      setDirtyBusyId(itemId);
+      setError(null);
+      setDirtyStatus(null);
+
+      const response = await fetch(`/api/products/${itemId}/dirty`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ dirtyAmount: nextDirtyAmount }),
+      });
+
+      const data = (await response.json()) as DirtyUpdateResponse;
+
+      if (!response.ok || !data.product) {
+        throw new Error(data.error || "Impossibile aggiornare lo sporco");
+      }
+
+      setItems((currentItems) =>
+        currentItems.map((item) =>
+          item.id === itemId ? { ...item, dirtyAmount: data.product?.dirtyAmount ?? item.dirtyAmount } : item,
+        ),
+      );
+      setDirtyStatus("Sporco aggiornato");
+      setEditingDirtyId(null);
+      setDirtyDraft("");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Errore imprevisto";
+      setError(message);
+    } finally {
+      setDirtyBusyId(null);
     }
   };
 
@@ -257,9 +374,92 @@ export function HistoryPage() {
           </article>
         </div>
 
+        <section className="mt-5 rounded-[28px] border border-emerald-200 bg-emerald-50 p-5 shadow-[0_18px_40px_-30px_rgba(5,150,105,0.35)]">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium uppercase tracking-[0.2em] text-emerald-700">
+                Condivisione
+              </p>
+              <h2 className="mt-2 text-2xl font-bold text-emerald-950">Messaggio WhatsApp</h2>
+              <p className="mt-2 text-sm leading-6 text-emerald-900">
+                Scegli il report, controlla il testo e poi copialo o aprilo su WhatsApp.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              className={`min-h-12 rounded-2xl px-4 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
+                reportType === "pickup"
+                  ? "bg-emerald-600 text-white"
+                  : "bg-white text-emerald-900 ring-1 ring-emerald-200 hover:bg-emerald-100"
+              }`}
+              onClick={() => {
+                setReportType("pickup");
+                setCopyStatus(null);
+              }}
+            >
+              Ritiro sporco
+            </button>
+            <button
+              type="button"
+              className={`min-h-12 rounded-2xl px-4 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
+                reportType === "order"
+                  ? "bg-emerald-600 text-white"
+                  : "bg-white text-emerald-900 ring-1 ring-emerald-200 hover:bg-emerald-100"
+              }`}
+              onClick={() => {
+                setReportType("order");
+                setCopyStatus(null);
+              }}
+            >
+              Ordine
+            </button>
+          </div>
+
+          <div className="mt-4 rounded-3xl bg-white p-4 ring-1 ring-emerald-200">
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-emerald-700">
+              Anteprima
+            </p>
+            <pre className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-slate-800">
+              {activeMessage}
+            </pre>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              className="min-h-12 rounded-2xl bg-white px-4 text-sm font-semibold text-emerald-900 ring-1 ring-emerald-200 transition hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              onClick={() => void handleCopyReport()}
+              disabled={loading}
+            >
+              Copia messaggio
+            </button>
+            <a
+              href={whatsappUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="flex min-h-12 items-center justify-center rounded-2xl bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            >
+              Apri WhatsApp
+            </a>
+          </div>
+
+          {copyStatus ? (
+            <p className="mt-3 text-sm font-medium text-emerald-800">{copyStatus}</p>
+          ) : null}
+        </section>
+
         {error ? (
           <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
+          </div>
+        ) : null}
+
+        {dirtyStatus ? (
+          <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            {dirtyStatus}
           </div>
         ) : null}
 
@@ -318,14 +518,73 @@ export function HistoryPage() {
                     </div>
                   </div>
 
-                  <div className="mt-4 grid grid-cols-3 gap-3">
+                  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
                     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                       <p className="text-xs uppercase tracking-[0.15em] text-slate-400">Attuale</p>
                       <p className="mt-1 text-3xl font-bold text-slate-900">{item.quantity}</p>
                     </div>
-                    <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
-                      <p className="text-xs uppercase tracking-[0.15em] text-amber-700">Sporco</p>
-                      <p className="mt-1 text-3xl font-bold text-amber-950">{item.dirtyAmount}</p>
+                    <div
+                      className={`rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 ${
+                        editingDirtyId === item.id ? "sm:col-span-3" : ""
+                      }`}
+                    >
+                      {editingDirtyId === item.id ? (
+                        <div>
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-xs uppercase tracking-[0.15em] text-amber-700">Sporco</p>
+                              <p className="mt-1 text-sm text-amber-900">
+                                Correggi il numero reale di capi sporchi.
+                              </p>
+                            </div>
+                            <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-amber-900 ring-1 ring-amber-200">
+                              Modifica attiva
+                            </span>
+                          </div>
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            min={0}
+                            step={1}
+                            autoFocus
+                            value={dirtyDraft}
+                            onChange={(event) => setDirtyDraft(event.target.value)}
+                            className="mt-3 h-14 w-full rounded-2xl border-2 border-amber-300 bg-white px-4 text-3xl font-bold text-amber-950 outline-none ring-0 focus:border-amber-500"
+                          />
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              className="min-h-12 rounded-2xl bg-amber-600 px-3 text-sm font-semibold text-white transition hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:cursor-not-allowed disabled:opacity-60"
+                              onClick={() => void saveDirtyEdit(item.id)}
+                              disabled={dirtyBusyId === item.id}
+                            >
+                              {dirtyBusyId === item.id ? "Salvataggio..." : "Salva"}
+                            </button>
+                            <button
+                              type="button"
+                              className="min-h-12 rounded-2xl bg-white px-3 text-sm font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400"
+                              onClick={cancelDirtyEdit}
+                              disabled={dirtyBusyId === item.id}
+                            >
+                              Annulla
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1">
+                            <p className="text-xs uppercase tracking-[0.15em] text-amber-700">Sporco</p>
+                            <p className="mt-1 text-3xl font-bold text-amber-950">{item.dirtyAmount}</p>
+                          </div>
+                          <button
+                            type="button"
+                            className="min-h-11 rounded-2xl bg-white px-4 text-sm font-semibold text-amber-900 ring-1 ring-amber-200 transition hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                            onClick={() => startDirtyEdit(item)}
+                          >
+                            Modifica
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3">
                       <p className="text-xs uppercase tracking-[0.15em] text-blue-700">Da Solo</p>
@@ -345,15 +604,78 @@ export function HistoryPage() {
               {otherItems.map((item) => (
                 <div
                   key={item.id}
-                  className="flex items-center justify-between rounded-2xl bg-white px-4 py-3 ring-1 ring-slate-200"
+                  className="rounded-2xl bg-white px-4 py-4 ring-1 ring-slate-200"
                 >
-                  <div>
-                    <p className="text-base font-semibold text-slate-900">{item.name}</p>
-                    <p className="text-sm text-slate-500">Non entra nel calcolo coppie</p>
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-base font-semibold text-slate-900">{item.name}</p>
+                      <p className="text-sm text-slate-500">Non entra nel calcolo coppie</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs uppercase tracking-[0.15em] text-slate-400">Attuale</p>
+                      <p className="text-2xl font-bold text-slate-900">{item.quantity}</p>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-xs uppercase tracking-[0.15em] text-slate-400">Attuale</p>
-                    <p className="text-2xl font-bold text-slate-900">{item.quantity}</p>
+
+                  <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+                    {editingDirtyId === item.id ? (
+                      <div>
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.15em] text-amber-700">Sporco</p>
+                            <p className="mt-1 text-sm text-amber-900">
+                              Correggi il numero reale di capi sporchi.
+                            </p>
+                          </div>
+                          <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-amber-900 ring-1 ring-amber-200">
+                            Modifica attiva
+                          </span>
+                        </div>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min={0}
+                          step={1}
+                          autoFocus
+                          value={dirtyDraft}
+                          onChange={(event) => setDirtyDraft(event.target.value)}
+                          className="mt-3 h-14 w-full rounded-2xl border-2 border-amber-300 bg-white px-4 text-3xl font-bold text-amber-950 outline-none ring-0 focus:border-amber-500"
+                        />
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            className="min-h-12 rounded-2xl bg-amber-600 px-3 text-sm font-semibold text-white transition hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:cursor-not-allowed disabled:opacity-60"
+                            onClick={() => void saveDirtyEdit(item.id)}
+                            disabled={dirtyBusyId === item.id}
+                          >
+                            {dirtyBusyId === item.id ? "Salvataggio..." : "Salva"}
+                          </button>
+                          <button
+                            type="button"
+                            className="min-h-12 rounded-2xl bg-white px-3 text-sm font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400"
+                            onClick={cancelDirtyEdit}
+                            disabled={dirtyBusyId === item.id}
+                          >
+                            Annulla
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1">
+                          <p className="text-xs uppercase tracking-[0.15em] text-amber-700">Sporco</p>
+                          <p className="mt-1 text-3xl font-bold text-amber-950">{item.dirtyAmount}</p>
+                        </div>
+
+                        <button
+                          type="button"
+                          className="min-h-11 rounded-2xl bg-white px-4 text-sm font-semibold text-amber-900 ring-1 ring-amber-200 transition hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                          onClick={() => startDirtyEdit(item)}
+                        >
+                          Modifica
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
